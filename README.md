@@ -263,15 +263,7 @@ The application allows a user to:
 7. Display prediction confidence
 8. Display class probabilities
 
-### Project Structure
 
-```text
-handwritten-digit-recognition/
-│
-├── app.py
-├── handwritten_digit_cnn.keras
-├── requirements.txt
-└── README.md
 ```
 
 ## Installation
@@ -279,7 +271,7 @@ handwritten-digit-recognition/
 Clone the repository:
 
 ```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
+git clone https://github.com/21Oli/handwritten-digit-recognition-CNN.git
 cd handwritten-digit-recognition
 ```
 
