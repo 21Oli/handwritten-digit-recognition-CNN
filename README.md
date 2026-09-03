@@ -29,7 +29,7 @@ This project builds an end-to-end handwritten digit recognition system from a cu
 
 The pipeline covers every stage from raw image quality checking through to a live Streamlit application that a user can upload images into and receive instant predictions.
 
-**Final test accuracy: 71.21%** on a leakage-free 125-image test set.
+**Final test accuracy: 92.13 %** on a leakage-free 127-image test set.
 
 ---
 
@@ -182,39 +182,42 @@ The best model checkpoint (lowest validation loss) was saved and used for all ev
 
 | Split | Images |
 |-------|-------:|
-| Training | 1,000 |
-| Validation | 125 |
-| Test | 125 |
+| Training | ~ 1,000 |
+| Validation | ~ 123 |
+| Test | ~ 127 |
 
-Zero data leakage was confirmed by pixel-level hash comparison across all three splits.
+Duplicate images (5 samples with identical pixel content) were detected by pixel-level hash comparison. A **group-aware `GroupShuffleSplit`** was used so all copies of a duplicate always land in the same partition — **0 overlaps** confirmed across all split pairs.
 
 ### Final Metrics
 
 | Metric | Score |
 |--------|------:|
-| Test Accuracy | **71.21%** |
-| Macro Precision | **74.71%** |
-| Macro Recall | **69.38%** |
-| Macro F1 | **68.46%** |
-| Weighted F1 | **69.55%** |
+| **Test Accuracy** | **92.13 %** |
+| **Macro Precision** | **92.27 %** |
+| **Macro Recall** | **91.65 %** |
+| **Macro F1** | **91.16 %** |
+| **Weighted F1** | **92.15 %** |
+| Validation Accuracy | 96.06 % |
+| Validation Loss | 0.2029 |
+| Test Loss | 0.3011 |
 
 ### Per-Class Test Accuracy
 
-| Digit | Accuracy |
-|-------|--------:|
-| 0 | 88.89% |
-| 1 | 100.00% |
-| 2 | 50.00% |
-| 3 | 66.67% |
-| 4 | 75.00% |
-| 5 | 87.50% |
-| 6 | 85.71% |
-| 7 | 80.00% |
-| 8 | 40.00% |
-| 9 | 20.00% |
+| Digit | Correct | Accuracy |
+|-------|--------:|---------:|
+| 0 | 11 / 11 | 100.0 % |
+| 1 | 13 / 15 |  86.7 % |
+| 2 | 10 / 13 |  76.9 % |
+| 3 | 16 / 16 | 100.0 % |
+| 4 | 14 / 15 |  93.3 % |
+| 5 | 15 / 15 | 100.0 % |
+| 6 |   7 / 7 | 100.0 % |
+| 7 | 15 / 15 | 100.0 % |
+| 8 |   7 / 9 |  77.8 % |
+| 9 |  9 / 11 |  81.8 % |
 
-Strongest: digits **1, 0, 5, 6**.  
-Most challenging: digits **2, 8, 9** — primarily due to visual similarity between certain writing styles.
+Perfect accuracy (100 %): digits **0, 3, 5, 6, 7**.  
+Most challenging: digits **2** (76.9 %), **8** (77.8 %), **9** (81.8 %).
 
 ---
 
@@ -224,7 +227,7 @@ The model is served through a **Streamlit** web application.
 
 ### Features
 
-- Upload any JPG or PNG image of a handwritten digit
+- Upload a JPG or PNG image of a handwritten digit
 - Automatic preprocessing (background normalisation, contrast enhancement, crop, resize)
 - Displays the predicted digit and confidence score
 - Shows the 32 × 32 preprocessed image passed to the CNN
@@ -308,11 +311,11 @@ pillow
 
 ### Current Limitations
 
-- Small dataset (1,250 images / 125 per class) — accuracy estimates have high variance
+- Small dataset (1,250 images / 125 per class) — accuracy estimates carry higher variance than with a larger corpus
 - Limited handwriting style diversity
 - Some very faint images required aggressive contrast correction
-- Test set of 125 images is too small for robust statistical conclusions
-- Digits 8 and 9 are significantly under-performing
+- Test set of 127 images is sufficient but not large enough for universal statistical conclusions
+- Digits 2, 8 and 9 are the remaining under-performing classes
 
 ### Planned Improvements
 

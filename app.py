@@ -223,7 +223,7 @@ with st.sidebar:
         | **Input** | 32 × 32 × 1 |
         | **Classes** | 0 – 9 |
         | **Parameters** | 281,674 |
-        | **Test Accuracy** | 71.21 % |
+        | **Test Accuracy** | 92.13 % |
         | **Framework** | TensorFlow |
         """
     )
@@ -368,5 +368,5 @@ st.caption(
     "Handwritten Digit Recognition · "
     "Enhanced CNN · "
     "Trained on 1,250 custom images · "
-    "71.21% test accuracy"
+    "92.13 % test accuracy"
 )
