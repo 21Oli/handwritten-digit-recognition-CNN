@@ -1,270 +1,237 @@
-# Handwritten Digit Recognition using CNN
+# Handwritten Digit Recognition
 
-A deep learning project for recognizing handwritten digits **0–9** from images using a Convolutional Neural Network (CNN), with image preprocessing, contrast enhancement, leakage-free dataset splitting, model evaluation, and Streamlit deployment.
+A computer vision project that recognises handwritten digits (0–9) from photographs using a Convolutional Neural Network (CNN), deployed as a Streamlit web application.
+
+---
+
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Pipeline](#pipeline)
+- [Dataset](#dataset)
+- [Preprocessing](#preprocessing)
+- [Data Augmentation](#data-augmentation)
+- [CNN Architecture](#cnn-architecture)
+- [Training](#training)
+- [Results](#results)
+- [Deployment](#deployment)
+- [Installation](#installation)
+- [Run the Application](#run-the-application)
+- [Project Structure](#project-structure)
+- [Requirements](#requirements)
+- [Limitations & Future Work](#limitations--future-work)
+
+---
 
 ## Project Overview
 
-The goal of this project is to build an end-to-end handwritten digit recognition system using a custom dataset of handwritten digit images.
+This project builds an end-to-end handwritten digit recognition system from a custom dataset of photographed digit images.
 
-The complete pipeline includes:
+The pipeline covers every stage from raw image quality checking through to a live Streamlit application that a user can upload images into and receive instant predictions.
 
-* Image quality checking
-* Grayscale conversion
-* Image normalization
-* Digit centering and resizing
-* Contrast enhancement for faint digits
-* Duplicate detection
-* Leakage-free train/validation/test splitting
-* Training-only image augmentation
-* CNN model training
-* Validation and test evaluation
-* Model saving
-* Streamlit deployment
+**Final test accuracy: 71.21%** on a leakage-free 125-image test set.
+
+---
+
+## Pipeline
+
+| Stage | Description |
+|-------|-------------|
+| **1** | Environment setup & library imports |
+| **2** | Dataset audit — class balance, integrity, dimension stats |
+| **3** | Visual inspection — raw sample grid, dimension distributions |
+| **4** | Preprocessing pipeline — design, implementation, visual validation |
+| **5** | Full dataset processing — apply pipeline to all 1,250 images |
+| **6** | Train / validation / test split — stratified, leakage-free |
+| **7** | Data augmentation — training-only mild transforms |
+| **8** | CNN architecture — Enhanced CNN, 281,674 parameters |
+| **9** | Model training — Adam, early stopping, LR scheduling |
+| **10** | Evaluation & error analysis — confusion matrix, per-class accuracy |
+| **11** | Model export & verification |
+| **12** | Conclusion |
+
+The full pipeline is documented in the Jupyter notebook:
+
+```
+notebooks/handwritten_digit_recognition_1.ipynb
+```
+
+---
 
 ## Dataset
 
-The dataset contains **657 handwritten digit images** covering ten classes:
+The custom dataset contains **1,250 handwritten digit photographs** covering ten digit classes.
 
-| Digit     |  Images |
-| --------- | ------: |
-| 0         |      90 |
-| 1         |      50 |
-| 2         |      80 |
-| 3         |      56 |
-| 4         |      80 |
-| 5         |      80 |
-| 6         |      69 |
-| 7         |      51 |
-| 8         |      51 |
-| 9         |      50 |
-| **Total** | **657** |
+| Digit | Images |
+|-------|-------:|
+| 0 | 125 |
+| 1 | 125 |
+| 2 | 125 |
+| 3 | 125 |
+| 4 | 125 |
+| 5 | 125 |
+| 6 | 125 |
+| 7 | 125 |
+| 8 | 125 |
+| 9 | 125 |
+| **Total** | **1,250** |
 
-Each image is converted to a **32 × 32 grayscale image** before being provided to the CNN.
+Raw images are RGB JPEGs with highly variable dimensions (width range: 86–8,160 px; height range: 66–7,550 px). The preprocessing pipeline normalises all images to **32 × 32 grayscale** before model input.
 
-## Data Leakage Prevention
+---
 
-Duplicate images were detected during dataset auditing.
+## Preprocessing
 
-Three duplicate groups were identified:
+Each image passes through a 10-step pipeline before being fed into the CNN.
 
-* Digit 1
-* Digit 2
-* Digit 8
-
-The dataset was regrouped so that duplicate images could not occur across different dataset splits.
-
-Final leakage-free split:
-
-| Split      |  Images |
-| ---------- | ------: |
-| Training   |     524 |
-| Validation |      67 |
-| Test       |      66 |
-| **Total**  | **657** |
-
-Final duplicate check:
-
-```text
-Train ↔ Validation: 0
-Train ↔ Test:       0
-Validation ↔ Test:  0
 ```
-
-All three splits contain all ten digit classes.
-
-## Image Preprocessing
-
-The preprocessing pipeline was designed to make the handwritten digits more consistent before CNN training.
-
-```text
-Raw Images
-    ↓
-Quality Control
-    ↓
+Raw Image  (RGB, variable size)
+        ↓
 Grayscale Conversion
-    ↓
-Lighting / Background Normalization
-    ↓
-Digit Centering
-    ↓
-Contrast Enhancement
-    ↓
-Resize to 32 × 32
-    ↓
-Pixel Normalization
-    ↓
-CNN Input
+        ↓
+Background Normalisation   dark background → invert
+        ↓
+Contrast Enhancement       CLAHE  (notebook) / PIL Enhance  (app)
+        ↓
+Adaptive Thresholding      separate digit from background
+        ↓
+Morphological Closing      fill small stroke gaps
+        ↓
+Largest-Contour Bounding Box   isolate digit region
+        ↓
+Aspect-Ratio-Preserving Resize   digit ≤ 26 px wide/tall
+        ↓
+Centre on 32 × 32 White Canvas
+        ↓
+Pixel Normalisation   ÷ 255   →   [0, 1]  float32
+        ↓
+CNN Input  (32, 32, 1)
 ```
 
-Contrast enhancement was particularly useful for very faint handwritten digits. During analysis, several images containing digits such as **2 and 6** appeared almost blank before enhancement but became significantly more visible after enhancement.
+The notebook uses **OpenCV (cv2)** for CLAHE, adaptive thresholding and morphological operations.  
+The deployment application (`app.py`) uses **PIL + NumPy only** — OpenCV is omitted because Streamlit Cloud does not provide the `libGL` dependency required by `cv2`.
+
+---
 
 ## Data Augmentation
 
-Augmentation was applied **only to the training set**.
+Augmentation is applied **to the training set only**. The validation and test sets are used as-is.
 
-The final augmentation configuration was:
+| Transform | Value | Rationale |
+|-----------|-------|-----------|
+| Rotation | ± 7° | Natural handwriting tilt variation |
+| Width shift | 5 % | Slight horizontal translation |
+| Height shift | 5 % | Slight vertical translation |
+| Shear | 3 % | Pen angle variation |
+| Zoom | 0.95 – 1.05 | Slight scale variation |
+| Fill mode | nearest | Avoids black border artefacts |
+| Brightness | disabled | Aggressive brightness can erase faint strokes |
 
-```text
-Rotation range      : ±7°
-Width shift         : 0.05
-Height shift        : 0.05
-Shear               : 0.03
-Zoom                : 0.95 – 1.05
-Fill mode           : nearest
-Brightness          : Disabled
-```
-
-Brightness augmentation was disabled because testing showed that aggressive brightness transformations could create nearly blank images.
+---
 
 ## CNN Architecture
 
-The final selected model is an Enhanced CNN.
-
-```text
-Input: 32 × 32 × 1
-        ↓
-Conv2D (32 filters)
-        ↓
-MaxPooling2D
-        ↓
-Conv2D (64 filters)
-        ↓
-MaxPooling2D
-        ↓
-Flatten
-        ↓
-Dense (64)
-        ↓
-Dropout
-        ↓
-Dense (10)
-        ↓
-Digit Prediction
+```
+Input  (32, 32, 1)
+   ↓
+Conv2D   32 filters  3×3  ReLU   → (32, 32, 32)
+MaxPooling2D  2×2                 → (16, 16, 32)
+   ↓
+Conv2D   64 filters  3×3  ReLU   → (16, 16, 64)
+MaxPooling2D  2×2                 → ( 8,  8, 64)
+   ↓
+Flatten                           → (4096)
+Dense    64   ReLU
+Dropout  0.4
+Dense    10   Softmax
+   ↓
+Output  (10 classes)
 ```
 
-### Model Parameters
+| Property | Value |
+|----------|-------|
+| Total parameters | 281,674 |
+| Trainable parameters | 281,674 |
+| Input shape | (32, 32, 1) |
+| Output shape | (10,) |
 
-```text
-Total parameters       : 281,674
-Trainable parameters   : 281,674
-Non-trainable          : 0
-Input                  : (32, 32, 1)
-Output                 : (10)
-```
+---
 
 ## Training
 
-The model was trained using:
+| Setting | Value |
+|---------|-------|
+| Optimiser | Adam |
+| Initial learning rate | 0.001 |
+| Loss | Sparse Categorical Crossentropy |
+| Metric | Accuracy |
+| Batch size | 32 |
+| Max epochs | 60 |
+| Early stopping patience | 10 epochs |
+| LR reduction patience | 5 epochs |
+| LR reduction factor | 0.5 |
+| Min learning rate | 1e-6 |
 
-```text
-Optimizer : Adam
-Initial Learning Rate : 0.001
-Loss : Sparse Categorical Crossentropy
-Metric : Accuracy
-```
+The best model checkpoint (lowest validation loss) was saved and used for all evaluations.
 
-Training callbacks included:
+---
 
-* Early stopping
-* ReduceLROnPlateau
-* Best-model checkpointing
+## Results
 
-The best model was selected according to validation loss.
+### Split Summary
 
-## Final Performance
+| Split | Images |
+|-------|-------:|
+| Training | 1,000 |
+| Validation | 125 |
+| Test | 125 |
 
-### Training
-
-```text
-Accuracy : 74.81%
-Loss     : 0.8561
-```
-
-### Validation
-
-```text
-Accuracy : 59.70%
-Loss     : 1.1223
-```
-
-### Leakage-Free Test
-
-The final test set contained **66 previously unseen images**.
-
-```text
-Test Loss     : 1.0636
-Test Accuracy : 71.21%
-
-Correct predictions   : 47
-Incorrect predictions : 19
-```
+Zero data leakage was confirmed by pixel-level hash comparison across all three splits.
 
 ### Final Metrics
 
-| Metric          |      Score |
-| --------------- | ---------: |
-| Accuracy        | **71.21%** |
+| Metric | Score |
+|--------|------:|
+| Test Accuracy | **71.21%** |
 | Macro Precision | **74.71%** |
-| Macro Recall    | **69.38%** |
-| Macro F1        | **68.46%** |
-| Weighted F1     | **69.55%** |
+| Macro Recall | **69.38%** |
+| Macro F1 | **68.46%** |
+| Weighted F1 | **69.55%** |
 
-## Test Accuracy by Digit
+### Per-Class Test Accuracy
 
-| Digit | Correct | Accuracy |
-| ----- | ------: | -------: |
-| 0     |     8/9 |   88.89% |
-| 1     |     5/5 |  100.00% |
-| 2     |     4/8 |   50.00% |
-| 3     |     4/6 |   66.67% |
-| 4     |     6/8 |   75.00% |
-| 5     |     7/8 |   87.50% |
-| 6     |     6/7 |   85.71% |
-| 7     |     4/5 |   80.00% |
-| 8     |     2/5 |   40.00% |
-| 9     |     1/5 |   20.00% |
+| Digit | Accuracy |
+|-------|--------:|
+| 0 | 88.89% |
+| 1 | 100.00% |
+| 2 | 50.00% |
+| 3 | 66.67% |
+| 4 | 75.00% |
+| 5 | 87.50% |
+| 6 | 85.71% |
+| 7 | 80.00% |
+| 8 | 40.00% |
+| 9 | 20.00% |
 
-The strongest recognition was observed for digits **1, 0, 5, and 6**, while **2, 8, and 9** were more challenging.
+Strongest: digits **1, 0, 5, 6**.  
+Most challenging: digits **2, 8, 9** — primarily due to visual similarity between certain writing styles.
 
-## Model Verification
-
-The final model was saved and loaded independently to verify that the deployment artifact was identical to the evaluated model.
-
-```text
-Model file:
-handwritten_digit_cnn.keras
-```
-
-Verification:
-
-```text
-Input shape    : (None, 32, 32, 1)
-Output shape   : (None, 10)
-Parameters     : 281,674
-
-Test Loss      : 1.0636
-Test Accuracy  : 71.21%
-```
-
-The saved model reproduced the final test accuracy, confirming that the correct model was preserved for deployment.
+---
 
 ## Deployment
 
-The model is deployed using **Streamlit**.
+The model is served through a **Streamlit** web application.
 
-The application allows a user to:
+### Features
 
-1. Upload a handwritten digit image
-2. Preprocess the image
-3. Enhance the image
-4. Resize it to 32 × 32
-5. Run the CNN prediction
-6. Display the predicted digit
-7. Display prediction confidence
-8. Display class probabilities
+- Upload any JPG or PNG image of a handwritten digit
+- Automatic preprocessing (background normalisation, contrast enhancement, crop, resize)
+- Displays the predicted digit and confidence score
+- Shows the 32 × 32 preprocessed image passed to the CNN
+- Bar chart and probability table for all 10 classes
+- Model information panel in the sidebar
 
-
-```
+---
 
 ## Installation
 
@@ -277,14 +244,14 @@ cd handwritten-digit-recognition
 
 Create and activate a virtual environment:
 
-### Windows
+**Windows**
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 ```
 
-### Linux / macOS
+**Linux / macOS**
 
 ```bash
 python3 -m venv .venv
@@ -297,71 +264,68 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-## Run the Application
+---
 
-Start Streamlit:
+## Run the Application
 
 ```bash
 streamlit run app.py
 ```
 
-The application will open in your browser.
+The application opens in your browser at `http://localhost:8501`.
+
+Make sure `handwritten_digit_cnn.keras` is present in the project root before running.
+
+---
+
+## Project Structure
+
+```
+handwritten-digit-recognition/
+├── app.py                          # Streamlit deployment application
+├── handwritten_digit_cnn.keras     # Trained CNN model
+├── requirements.txt                # Python dependencies
+├── runtime.txt                     # Python version for deployment
+├── README.md                       # This file
+└── notebooks/
+    └── handwritten_digit_recognition_1.ipynb   # Full CV pipeline notebook
+```
+
+---
 
 ## Requirements
 
-The main dependencies are:
-
-```text
+```
 tensorflow==2.21.0
 streamlit
 numpy
 pillow
 ```
 
-## Limitations
+---
 
-The current dataset contains only **657 images**, which is relatively small for a ten-class image classification problem.
+## Limitations & Future Work
 
-The main limitations are:
+### Current Limitations
 
-* Small dataset size
-* Variation in handwriting styles
-* Some very faint images
-* Limited examples for certain classes
-* Difficulty distinguishing visually similar handwriting
-* Lower performance for digits such as 8 and 9
+- Small dataset (1,250 images / 125 per class) — accuracy estimates have high variance
+- Limited handwriting style diversity
+- Some very faint images required aggressive contrast correction
+- Test set of 125 images is too small for robust statistical conclusions
+- Digits 8 and 9 are significantly under-performing
 
-The test set also contains only 66 images, so the reported accuracy should be interpreted as an evaluation of this particular dataset rather than a universal estimate of handwritten digit recognition performance.
+### Planned Improvements
 
-## Future Improvements
-
-Potential improvements include:
-
-* Collecting more handwritten images
-* Increasing the number of writing styles
-* Improving image segmentation
-* Improving digit centering
-* Testing additional CNN architectures
-* Using transfer learning where appropriate
-* Hyperparameter optimization
-* Increasing the size of the test set
-* Collecting more examples of difficult digits
-* Improving deployment preprocessing consistency
-* Adding confidence thresholds for uncertain predictions
-
-## Conclusion
-
-This project successfully developed an end-to-end handwritten digit recognition system using a CNN.
-
-The final pipeline achieved **71.21% accuracy on a leakage-free test set** containing 66 unseen images. Duplicate leakage was explicitly detected and removed, and the saved deployment model was independently verified to reproduce the same test performance.
-
-The final model is:
-
-```text
-handwritten_digit_cnn.keras
-```
-
-and is ready to be used by the Streamlit application.
+| Priority | Improvement |
+|----------|-------------|
+| High | Collect more images — target ≥ 500 per class |
+| High | Increase handwriting style diversity |
+| Medium | Test deeper architectures (residual blocks) |
+| Medium | Apply transfer learning from MNIST pre-trained weights |
+| Medium | Improve digit isolation with connected-component analysis |
+| Low | Hyperparameter search (Keras Tuner) |
+| Low | Add confidence threshold — reject uncertain predictions in the app |
+| Low | Expand test set for more reliable accuracy estimates |
 
 ---
 
@@ -369,6 +333,4 @@ and is ready to be used by the Streamlit application.
 
 **Oli Bakala**
 
-### Project
-
-**Handwritten Digit Recognition using Convolutional Neural Network (CNN)**
+Handwritten Digit Recognition using Convolutional Neural Network (CNN)
