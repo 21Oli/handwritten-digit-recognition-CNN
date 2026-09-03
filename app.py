@@ -1,6 +1,10 @@
 # ============================================================
 # HANDWRITTEN DIGIT RECOGNITION
-# STREAMLIT DEPLOYMENT
+# Streamlit Deployment Application
+#
+# Stack  : TensorFlow · Streamlit · PIL · NumPy
+# Model  : Enhanced CNN  (32 × 32 × 1 input, 10 classes)
+# Author : Oli Bakala
 # ============================================================
 
 import os
@@ -8,609 +12,361 @@ import os
 import numpy as np
 import streamlit as st
 import tensorflow as tf
-
-from PIL import Image, ImageOps, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps
 
 
 # ============================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
     page_title="Handwritten Digit Recognition",
     page_icon="🔢",
-    layout="centered"
+    layout="centered",
+    initial_sidebar_state="collapsed",
 )
 
 
 # ============================================================
-# CONFIGURATION
+# CONSTANTS
 # ============================================================
 
-MODEL_PATH = "handwritten_digit_cnn.keras"
-
-TARGET_SIZE = 32
-
-CLASS_NAMES = [
-    "0", "1", "2", "3", "4",
-    "5", "6", "7", "8", "9"
-]
+MODEL_PATH   = "handwritten_digit_cnn.keras"
+TARGET_SIZE  = 32
+NUM_CLASSES  = 10
+CLASS_NAMES  = [str(i) for i in range(NUM_CLASSES)]
 
 
 # ============================================================
-# CHECK MODEL FILE
+# MODEL LOADING
 # ============================================================
 
-if not os.path.exists(MODEL_PATH):
-
-    st.error(
-        f"Model file not found: {MODEL_PATH}"
-    )
-
-    st.info(
-        "Make sure handwritten_digit_cnn.keras "
-        "is in the root folder of your GitHub repository."
-    )
-
-    st.stop()
+def _check_model_file() -> None:
+    """Stop the app early if the model file is missing."""
+    if not os.path.exists(MODEL_PATH):
+        st.error(f"Model file not found: **{MODEL_PATH}**")
+        st.info(
+            "Make sure `handwritten_digit_cnn.keras` is in the "
+            "root folder of the repository."
+        )
+        st.stop()
 
 
-# ============================================================
-# LOAD MODEL
-# ============================================================
+@st.cache_resource(show_spinner="Loading CNN model …")
+def load_model() -> tf.keras.Model:
+    """Load the saved Keras model (cached across reruns)."""
+    return tf.keras.models.load_model(MODEL_PATH)
 
-@st.cache_resource
-def load_model():
 
-    return tf.keras.models.load_model(
-        MODEL_PATH
-    )
-
+_check_model_file()
 
 try:
-
     model = load_model()
-
 except Exception as error:
-
-    st.error(
-        "Failed to load the CNN model."
-    )
-
+    st.error("Failed to load the CNN model.")
     st.exception(error)
-
     st.stop()
 
 
 # ============================================================
-# IMAGE PREPROCESSING
-# PIL + NUMPY ONLY
-# NO OPENCV REQUIRED
+# PREPROCESSING PIPELINE
+# ============================================================
+#
+# This deployment version uses PIL + NumPy only.
+# OpenCV is intentionally omitted because Streamlit Cloud
+# does not provide the libGL dependency required by cv2.
+#
+# Pipeline steps:
+#   1.  Convert to grayscale
+#   2.  Normalise background  (dark bg → invert)
+#   3.  Enhance contrast
+#   4.  Apply auto-contrast
+#   5.  Detect digit bounding box
+#   6.  Crop around the digit
+#   7.  Aspect-ratio-preserving resize  (digit ≤ 26 px)
+#   8.  Centre on white 32 × 32 canvas
+#   9.  Final auto-contrast pass
+#   10. Normalise pixel values  → [0, 1]  float32
+#   11. Add channel + batch dimensions  → (1, 32, 32, 1)
 # ============================================================
 
-def preprocess_image(image):
+def preprocess_image(image: Image.Image) -> np.ndarray:
     """
-    Preprocess an uploaded handwritten digit image.
+    Preprocess an uploaded PIL image for CNN inference.
 
-    The deployment version intentionally avoids OpenCV
-    because Streamlit Cloud does not provide the Linux
-    libGL dependency required by standard OpenCV.
+    Parameters
+    ----------
+    image : PIL.Image.Image
+        Raw uploaded image (any mode, any size).
 
-    Output:
-        Shape : (1, 32, 32, 1)
-        Dtype : float32
-        Range : [0, 1]
+    Returns
+    -------
+    np.ndarray
+        Batch-ready array with shape (1, 32, 32, 1),
+        dtype float32, values in [0, 1].
     """
 
-    # --------------------------------------------------------
-    # 1. Convert image to grayscale
-    # --------------------------------------------------------
+    # ── 1. Grayscale ─────────────────────────────────────────
+    gray_pil = image.convert("L")
+    gray     = np.asarray(gray_pil, dtype=np.uint8)
 
-    image = image.convert("L")
-
-    # --------------------------------------------------------
-    # 2. Convert PIL image to NumPy
-    # --------------------------------------------------------
-
-    gray = np.asarray(
-        image
-    ).astype(np.uint8)
-
-    # --------------------------------------------------------
-    # 3. Ensure white background
-    #
-    # If the uploaded image has a dark background,
-    # invert it.
-    # --------------------------------------------------------
-
+    # ── 2. Background normalisation ──────────────────────────
     if np.mean(gray) < 127:
-
         gray = 255 - gray
 
-    # --------------------------------------------------------
-    # 4. Improve contrast
-    # --------------------------------------------------------
+    # ── 3. Contrast enhancement ──────────────────────────────
+    pil_gray = Image.fromarray(gray, mode="L")
+    pil_gray = ImageEnhance.Contrast(pil_gray).enhance(1.5)
 
-    pil_gray = Image.fromarray(
-        gray,
-        mode="L"
-    )
+    # ── 4. Auto-contrast ─────────────────────────────────────
+    pil_gray = ImageOps.autocontrast(pil_gray, cutoff=1)
+    gray     = np.asarray(pil_gray, dtype=np.uint8)
 
-    pil_gray = ImageEnhance.Contrast(
-        pil_gray
-    ).enhance(1.5)
-
-    # --------------------------------------------------------
-    # 5. Auto contrast
-    # --------------------------------------------------------
-
-    pil_gray = ImageOps.autocontrast(
-        pil_gray,
-        cutoff=1
-    )
-
-    gray = np.asarray(
-        pil_gray
-    ).astype(np.uint8)
-
-    # --------------------------------------------------------
-    # 6. Detect foreground / digit
-    #
-    # Dark pixels are treated as digit pixels.
-    # --------------------------------------------------------
-
+    # ── 5. Detect digit bounding box ─────────────────────────
     foreground = gray < 200
+    ys, xs     = np.where(foreground)
 
-    ys, xs = np.where(
-        foreground
-    )
-
-    # --------------------------------------------------------
-    # 7. Crop around the digit
-    # --------------------------------------------------------
-
+    # ── 6. Crop around the digit ─────────────────────────────
     if len(xs) > 0:
-
-        x_min = int(xs.min())
-        x_max = int(xs.max())
-
-        y_min = int(ys.min())
-        y_max = int(ys.max())
-
-        # Add small margin
         margin = 4
-
-        x_min = max(
-            0,
-            x_min - margin
-        )
-
-        y_min = max(
-            0,
-            y_min - margin
-        )
-
-        x_max = min(
-            gray.shape[1] - 1,
-            x_max + margin
-        )
-
-        y_max = min(
-            gray.shape[0] - 1,
-            y_max + margin
-        )
-
-        cropped = gray[
-            y_min:y_max + 1,
-            x_min:x_max + 1
-        ]
-
+        x_min  = max(0,                  int(xs.min()) - margin)
+        y_min  = max(0,                  int(ys.min()) - margin)
+        x_max  = min(gray.shape[1] - 1,  int(xs.max()) + margin)
+        y_max  = min(gray.shape[0] - 1,  int(ys.max()) + margin)
+        cropped = gray[y_min : y_max + 1, x_min : x_max + 1]
     else:
-
-        # If no foreground is detected,
-        # use the complete image.
         cropped = gray
 
-    # --------------------------------------------------------
-    # 8. Preserve aspect ratio
-    # --------------------------------------------------------
-
-    h, w = cropped.shape
-
-    # Leave padding around the digit
-    available_size = TARGET_SIZE - 6
-
-    # Prevent division problems
-    if w == 0 or h == 0:
-
+    # ── 7. Aspect-ratio-preserving resize ────────────────────
+    ch, cw = cropped.shape
+    if cw == 0 or ch == 0:
         cropped = gray
+        ch, cw  = cropped.shape
 
-        h, w = cropped.shape
+    available = TARGET_SIZE - 6
+    scale     = min(available / cw, available / ch)
+    new_w     = max(1, int(round(cw * scale)))
+    new_h     = max(1, int(round(ch * scale)))
 
-    scale = min(
-        available_size / w,
-        available_size / h
-    )
-
-    new_w = max(
-        1,
-        int(round(w * scale))
-    )
-
-    new_h = max(
-        1,
-        int(round(h * scale))
-    )
-
-    # --------------------------------------------------------
-    # 9. Resize digit
-    # --------------------------------------------------------
-
-    cropped_pil = Image.fromarray(
-        cropped,
-        mode="L"
-    )
-
+    cropped_pil = Image.fromarray(cropped, mode="L")
     resized_pil = cropped_pil.resize(
-        (new_w, new_h),
-        Image.Resampling.LANCZOS
+        (new_w, new_h), Image.Resampling.LANCZOS
     )
+    resized     = np.asarray(resized_pil, dtype=np.uint8)
 
-    resized = np.asarray(
-        resized_pil
-    ).astype(np.uint8)
+    # ── 8. Centre on white 32 × 32 canvas ────────────────────
+    canvas  = np.full((TARGET_SIZE, TARGET_SIZE), 255, dtype=np.uint8)
+    x_off   = (TARGET_SIZE - new_w) // 2
+    y_off   = (TARGET_SIZE - new_h) // 2
+    canvas[y_off : y_off + new_h, x_off : x_off + new_w] = resized
 
-    # --------------------------------------------------------
-    # 10. Create white 32 × 32 canvas
-    # --------------------------------------------------------
+    # ── 9. Final auto-contrast ────────────────────────────────
+    canvas_pil = Image.fromarray(canvas, mode="L")
+    canvas_pil = ImageOps.autocontrast(canvas_pil, cutoff=1)
 
-    canvas = np.full(
-        (
-            TARGET_SIZE,
-            TARGET_SIZE
-        ),
-        255,
-        dtype=np.uint8
-    )
+    # ── 10. Normalise ─────────────────────────────────────────
+    normalised = np.asarray(canvas_pil, dtype=np.float32) / 255.0
 
-    # --------------------------------------------------------
-    # 11. Center digit
-    # --------------------------------------------------------
+    # ── 11. Add dimensions  (32,32) → (1,32,32,1) ────────────
+    normalised = np.expand_dims(normalised, axis=-1)   # channel
+    normalised = np.expand_dims(normalised, axis=0)    # batch
 
-    start_x = (
-        TARGET_SIZE - new_w
-    ) // 2
-
-    start_y = (
-        TARGET_SIZE - new_h
-    ) // 2
-
-    canvas[
-        start_y:start_y + new_h,
-        start_x:start_x + new_w
-    ] = resized
-
-    # --------------------------------------------------------
-    # 12. Final AutoContrast
-    # --------------------------------------------------------
-
-    final_image = Image.fromarray(
-        canvas,
-        mode="L"
-    )
-
-    final_image = ImageOps.autocontrast(
-        final_image,
-        cutoff=1
-    )
-
-    # --------------------------------------------------------
-    # 13. Convert to NumPy
-    # --------------------------------------------------------
-
-    normalized = np.asarray(
-        final_image
-    ).astype(np.float32)
-
-    # --------------------------------------------------------
-    # 14. Normalize pixel values
-    # --------------------------------------------------------
-
-    normalized = (
-        normalized / 255.0
-    )
-
-    # --------------------------------------------------------
-    # 15. Add CNN channel dimension
-    #
-    # (32, 32) -> (32, 32, 1)
-    # --------------------------------------------------------
-
-    normalized = np.expand_dims(
-        normalized,
-        axis=-1
-    )
-
-    # --------------------------------------------------------
-    # 16. Add batch dimension
-    #
-    # (32, 32, 1) -> (1, 32, 32, 1)
-    # --------------------------------------------------------
-
-    normalized = np.expand_dims(
-        normalized,
-        axis=0
-    )
-
-    return normalized
+    return normalised
 
 
 # ============================================================
-# PREDICTION FUNCTION
+# PREDICTION
 # ============================================================
 
-def predict_digit(image):
+def predict(image: Image.Image) -> tuple[str, float, np.ndarray, np.ndarray]:
+    """
+    Run the full preprocessing + inference pipeline.
 
-    # Preprocess image
-    processed_image = preprocess_image(
-        image
-    )
-
-    # Model prediction
-    probabilities = model.predict(
-        processed_image,
-        verbose=0
-    )[0]
-
-    # Find highest probability
-    predicted_index = int(
-        np.argmax(probabilities)
-    )
-
-    # Convert index to digit
-    predicted_digit = CLASS_NAMES[
-        predicted_index
-    ]
-
-    # Confidence
-    confidence = float(
-        probabilities[predicted_index]
-    )
-
-    return (
-        predicted_digit,
-        confidence,
-        probabilities,
-        processed_image
-    )
+    Returns
+    -------
+    digit       : predicted digit label (string)
+    confidence  : probability of the predicted class (float, 0–1)
+    probs       : full softmax probability vector  (10,)
+    processed   : preprocessed array for display  (1, 32, 32, 1)
+    """
+    processed   = preprocess_image(image)
+    probs       = model.predict(processed, verbose=0)[0]
+    pred_index  = int(np.argmax(probs))
+    digit       = CLASS_NAMES[pred_index]
+    confidence  = float(probs[pred_index])
+    return digit, confidence, probs, processed
 
 
 # ============================================================
-# HEADER
+# UI — HEADER
 # ============================================================
 
-st.title(
-    "🔢 Handwritten Digit Recognition"
-)
-
+st.title("🔢 Handwritten Digit Recognition")
 st.write(
-    "Upload an image containing one handwritten digit "
-    "from 0 to 9, and the CNN will predict the digit."
+    "Upload a photo of a single handwritten digit (0–9) "
+    "and the CNN will identify it."
 )
+st.divider()
 
 
 # ============================================================
-# MODEL INFORMATION
+# UI — SIDEBAR: MODEL INFORMATION
 # ============================================================
 
-with st.expander(
-    "📋 Model Information"
-):
-
-    st.write(
-        "**Model:** Enhanced CNN"
+with st.sidebar:
+    st.header("Model Information")
+    st.markdown(
+        """
+        | Property | Value |
+        |----------|-------|
+        | **Architecture** | Enhanced CNN |
+        | **Input** | 32 × 32 × 1 |
+        | **Classes** | 0 – 9 |
+        | **Parameters** | 281,674 |
+        | **Test Accuracy** | 71.21 % |
+        | **Framework** | TensorFlow |
+        """
     )
-
-    st.write(
-        "**Input:** 32 × 32 × 1 grayscale image"
+    st.divider()
+    st.markdown(
+        """
+        **CNN Architecture**
+        ```
+        Input  (32, 32, 1)
+          ↓
+        Conv2D  32 filters  3×3
+        MaxPooling2D  2×2
+          ↓
+        Conv2D  64 filters  3×3
+        MaxPooling2D  2×2
+          ↓
+        Flatten
+        Dense  64  ReLU
+        Dropout  0.4
+        Dense  10  Softmax
+          ↓
+        Output  (10 classes)
+        ```
+        """
     )
-
-    st.write(
-        "**Classes:** 0–9"
-    )
-
-    st.write(
-        "**Parameters:** 281,674"
-    )
-
-    st.write(
-        "**Verified Test Accuracy:** 71.21%"
-    )
+    st.divider()
+    st.caption("Deployment: TensorFlow · Streamlit · PIL · NumPy")
 
 
 # ============================================================
-# IMAGE UPLOADER
+# UI — FILE UPLOADER
 # ============================================================
 
 uploaded_file = st.file_uploader(
-    "📤 Upload a handwritten digit image",
-    type=[
-        "jpg",
-        "jpeg",
-        "png"
-    ]
+    "Upload a handwritten digit image",
+    type=["jpg", "jpeg", "png"],
+    label_visibility="collapsed",
 )
 
 
 # ============================================================
-# PROCESS UPLOADED IMAGE
+# UI — INFERENCE FLOW
 # ============================================================
 
 if uploaded_file is not None:
 
-    # --------------------------------------------------------
-    # Open uploaded image
-    # --------------------------------------------------------
-
+    # ── Open uploaded file ────────────────────────────────────
     try:
-
-        image = Image.open(
-            uploaded_file
-        )
-
+        image = Image.open(uploaded_file)
     except Exception as error:
-
-        st.error(
-            "Unable to open the uploaded image."
-        )
-
+        st.error("Could not open the uploaded image.")
         st.exception(error)
-
         st.stop()
 
-    # --------------------------------------------------------
-    # Display original image
-    # --------------------------------------------------------
+    # ── Two-column layout ─────────────────────────────────────
+    col_img, col_result = st.columns([1, 1], gap="large")
 
-    st.subheader(
-        "🖼️ Original Image"
-    )
+    with col_img:
+        st.subheader("Uploaded Image")
+        st.image(image, use_container_width=True)
+        predict_clicked = st.button(
+            "Predict",
+            type="primary",
+            use_container_width=True,
+        )
 
-    st.image(
-        image,
-        caption="Uploaded handwritten digit",
-        width=300
-    )
-
-    # --------------------------------------------------------
-    # Prediction button
-    # --------------------------------------------------------
-
-    if st.button(
-        "🔍 Predict Digit",
-        type="primary",
-        use_container_width=True
-    ):
-
+    # ── Run prediction ────────────────────────────────────────
+    if predict_clicked:
         try:
-
-            (
-                predicted_digit,
-                confidence,
-                probabilities,
-                processed_image
-            ) = predict_digit(
-                image
-            )
-
-            # =================================================
-            # PREDICTION RESULT
-            # =================================================
-
-            st.subheader(
-                "🎯 Prediction"
-            )
-
-            st.success(
-                f"Predicted Digit: {predicted_digit}"
-            )
-
-            # =================================================
-            # CONFIDENCE
-            # =================================================
-
-            st.metric(
-                "Confidence",
-                f"{confidence * 100:.2f}%"
-            )
-
-            # =================================================
-            # PROCESSED IMAGE
-            # =================================================
-
-            st.subheader(
-                "⚙️ Processed Image"
-            )
-
-            display_image = (
-                processed_image[
-                    0,
-                    :,
-                    :,
-                    0
-                ]
-            )
-
-            st.image(
-                display_image,
-                caption="32 × 32 image given to the CNN",
-                width=300
-            )
-
-            # =================================================
-            # PROBABILITIES
-            # =================================================
-
-            st.subheader(
-                "📊 Prediction Probabilities"
-            )
-
-            probability_data = {
-                str(i): float(
-                    probabilities[i]
-                )
-                for i in range(10)
-            }
-
-            st.bar_chart(
-                probability_data
-            )
-
-            # =================================================
-            # PROBABILITY TABLE
-            # =================================================
-
-            st.subheader(
-                "Probability Details"
-            )
-
-            probability_rows = []
-
-            for i in range(10):
-
-                probability_rows.append(
-                    {
-                        "Digit": str(i),
-                        "Probability": (
-                            f"{probabilities[i] * 100:.2f}%"
-                        )
-                    }
-                )
-
-            st.table(
-                probability_rows
-            )
-
+            digit, confidence, probs, processed = predict(image)
         except Exception as error:
+            st.error("Prediction failed.")
+            st.exception(error)
+            st.stop()
 
-            st.error(
-                "Prediction failed."
+        with col_result:
+            st.subheader("Result")
+
+            # Predicted digit — large metric
+            st.metric(
+                label="Predicted Digit",
+                value=digit,
+                delta=f"{confidence * 100:.1f}% confidence",
             )
 
-            st.exception(error)
+            # Confidence colour
+            if confidence >= 0.80:
+                conf_color = "normal"
+            elif confidence >= 0.50:
+                conf_color = "off"
+            else:
+                conf_color = "inverse"
+
+            # Preprocessed image
+            st.caption("32 × 32 image fed to the CNN")
+            st.image(
+                processed[0, :, :, 0],
+                use_container_width=False,
+                width=128,
+            )
+
+        # ── Full probability table ────────────────────────────
+        st.divider()
+        st.subheader("Prediction Probabilities")
+
+        col_chart, col_table = st.columns([3, 2], gap="large")
+
+        prob_dict = {CLASS_NAMES[i]: float(probs[i]) for i in range(NUM_CLASSES)}
+
+        with col_chart:
+            st.bar_chart(prob_dict, use_container_width=True)
+
+        with col_table:
+            rows = [
+                {
+                    "Digit": CLASS_NAMES[i],
+                    "Probability": f"{probs[i] * 100:.2f}%",
+                    "": "◀" if i == int(digit) else "",
+                }
+                for i in range(NUM_CLASSES)
+            ]
+            st.table(rows)
 
 
 # ============================================================
-# FOOTER
+# UI — EMPTY STATE
+# ============================================================
+
+else:
+    st.info(
+        "Upload a JPG or PNG image of a handwritten digit to get started.",
+        icon="👆",
+    )
+
+
+# ============================================================
+# UI — FOOTER
 # ============================================================
 
 st.divider()
-
 st.caption(
-    "Handwritten Digit Recognition using "
-    "a Convolutional Neural Network (CNN)"
-)
-
-st.caption(
-    "Deployment version — TensorFlow + Streamlit + PIL + NumPy"
+    "Handwritten Digit Recognition · "
+    "Enhanced CNN · "
+    "Trained on 1,250 custom images · "
+    "71.21% test accuracy"
 )
